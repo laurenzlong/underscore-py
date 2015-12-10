@@ -1,32 +1,69 @@
-#from pudb import set_trace; set_trace()
-import random 
-from IPython.lib.deepreload import reload as dreload
+import random, inspect, copy
+from collections import defaultdict
 
-# building blocks: map, and find (that doesn't iterate through the whole list) 
+### ARRAY FUNCTIONS ###
 
 def each (array, func):
-	map(func, array)
+	map(array, func)
 	return array
 
-def reduceRight (array, func, initial=None):
-	if not array:
-		return initial
-	elif len(array)==1 and initial==None:
-		return array[0]
+def map(array, func):
+	# Func has arguments(element, index, array), 
+	# The last two are optional
+	def helper(accum, elem, index, array):
+		numArgs = len(inspect.getargspec(func).args)
+		if (numArgs==1):
+			args = (elem,)
+		elif (numArgs==2):
+			args = (elem, index)
+		elif (numArgs==3):
+			args = (elem, index, array)
+		else:
+			raise ValueError("Function has wrong number of parameters")
+		return accum + [func(*args)]
+
+	return reduce(array, helper, [])
+
+def reduce(array, func, initial=None):
+	# Func has arguments(accumulatedResult, elem, index, array)
+	# The last two are optional
+
+	numArgs = len(inspect.getargspec(func).args)
+
+	if (initial == None):
+		accum = array[0]
+		newArray = array[1:]
 	else:
-		return func(reduceRight(array[1:], func, initial), array[0])
+		accum = initial
+		newArray = array
 
+	for i, elem in enumerate(newArray):
+		if (numArgs==2):
+			args = (accum, elem)
+		elif (numArgs==3):
+			args = (accum, elem, i)
+		elif (numArgs==4):
+			args = (accum, elem, i, newArray)
+		else:
+			raise ValueError("Function has wrong number of parameters")
+		accum = func(*args)
 
-def find (array, func):
-	if (len(array) == 0): # no more elements left in list
-		return None
-	elif (func(array[0])): # element passes truth test 
-		return array[0]
-	else: # recursive case
-		return find(array[1:], func)
+	return accum
+		 
+def reduceRight(array, func, initial=None):
+	# Func has arguments(accumulatedResult, elem)
+	backwards = reduce(array, lambda a,x:[x]+a, [])
+	return reduce(backwards, func, initial)
 
-def filter (array, func):
-	return reduce(lambda a,x: a+[x] if func(x) else a, array, [])
+def find (array, test):
+	if array: 
+		if (test(array[0])): # element passes truth test 
+			return array[0]
+		else: # recursive case
+			return find(array[1:], test)
+
+def filter (array, test):
+	return reduce(array, lambda a,x: a+[x] if test(x) else a, [])
 
 def where (array, properties):
 	return filter(array, lambda record: filter(properties.items(), lambda x: \
@@ -36,44 +73,77 @@ def findWhere (array, properties):
 	return find(array, lambda record: filter(properties.items(), lambda x: \
 		x[0] in record and record[x[0]] == x[1]) == properties.items())
 
-def reject (array, func):
-	return reduce(lambda a,x: a+[x] if not func(x) else a, array, [])
-
+def reject (array, test):
+	return reduce(array,lambda a,x: a+[x] if not test(x) else a, [])
 
 def every(array, test):
-	return reduce(lambda a,x: a and test(x), array, True)
+	return reduce(array, lambda a,x: a and test(x), True)
 
 def some(array, test):
-	return reduce(lambda a,x: a or test(x), array, False)
+	return reduce(array, lambda a,x: a or test(x), False)
 
 def contains(array, value, from_index = 0):
-	return reduce(lambda a,x: a or x==value, array[from_index:], False)
+	return reduce(array[from_index:], lambda a,x: a or x==value, False)
 
-def invoke(array, func, *args):
-	return map(lambda x:func(x,*args), array)
+def invoke(array, func, *args, **kwargs):
+	return map(array, lambda x:func(x,*args, **kwargs))
 
 def pluck(array, property_name):
-	return map(lambda x:x.get(property_name), array)
+	return map(array, lambda x:x.get(property_name))
 
-def max(array, selector):
-	return reduce(lambda a,x: a if selector(a)>selector(x) else x, array)
+def max(array, criteria = lambda x:x):
+	return reduce(array, lambda a,x: a if criteria(a)>criteria(x) else x)
 
-def augmented_map(array, func):
-	return map(lambda x: {'value':x, 'key': func(x)},array)
+def min(array, criteria = lambda x:x):
+	return reduce(array, lambda a,x: x if criteria(a)>criteria(x) else a)
 
-# get Mary to code view this
-def groupBy(array, func):
-	array_with_keys = augmented_map(array, func)
+def sortBy(array, criteria = lambda x:x):
+	if (len(array) == 1):
+		return array
+	middle = len(array)/2
+	left  = sortBy(array[:middle], criteria)
+	right = sortBy(array[middle:], criteria)
+	def merge(left, right, criteria):
+		if len(left)  == 0:
+			return right
+		if len(right) == 0:
+			return left
+		if criteria(left[0]) <= criteria(right[0]):
+			return [left[0]] + merge(left[1:], right, criteria)
+		if criteria(right[0]) < criteria(left[0]):
+			return [right[0]] + merge(left, right[1:], criteria)
+
+	return merge(left, right, criteria)
+
+def groupBy(array, criteria):
 	def grouper(a,x):
-		key = x.get('key')
-		if a.get(key)==None:
-			a[key] = []
-		a[key].append(x.get('value'))
+		key = criteria(x)
+		a[key].append(x)
 		return a
+	return reduce(array, grouper, defaultdict(list))
 
-	return reduce(grouper,array_with_keys,{})
+def countBy(array, criteria):
+	def counter(a,x):
+		key = criteria(x)
+		if a.get(key)==None:
+			a[key]=0
+		else:
+			a[key]+=1
+		return a
+	return reduce(array, counter, {})
 
-# ARRAYS###
+def shuffle(array, index=0):
+	if index==len(array):
+		return array
+
+	copied = copy.deepcopy(array)
+	swapWith = random.randint(index, len(array)-1)
+
+	temp = copied[swapWith]
+	copied[swapWith] = copied[index]
+	copied[index] = temp
+
+	return shuffle(copied, index+1)
 
 def sample(array, n):
 	if len(array) < n:
@@ -86,17 +156,21 @@ def sample(array, n):
 		cleaned_array = array[0:picked_index] + array[picked_index+1:]
 		return picked + sample(cleaned_array, n-1)
 
-# FUNCTIONS ###
+def size(array):
+	return len(array)
+
+def partition(array, test):
+	return [filter(array, test),filter(array, negate(test))]
+
+### HIGHER ORDER FUNCTIONS ###
+ 
+def wrap(func, wrapper):
+	return lambda : wrapper(func)
 
 def negate(test):
 	return lambda x: not test(x)
 
-def wrap(func, wrapper):
-	return lambda : wrapper(func)
-
 def compose(*funcs):
-	return reduceRight(funcs[:-1], lambda a, f: lambda *args, **kwargs: f(a(*args, **kwargs)), funcs[-1]) if funcs else lambda *args: args
-	'''
 	def returning(a, f):
 		def inner(*args, **kwargs):
 			return f(a(*args, **kwargs))
@@ -106,29 +180,24 @@ def compose(*funcs):
 		return lambda *args: args
 	else:
 		return reduceRight(funcs[:-1], returning, funcs[-1])
-	'''
 
-data = [1,2,3,4,5]
-data_arrays = [[2,1,3,4],[4,2,5],[1,2,1]]
+### FOR FUN ###
 
-records = [{'name':'Lauren', 'gender': 'f', 'age':'1'}, {'name':'Ben', 'gender': 'm', 'age':'5'},{'name':'Lauren', 'gender': 'f', 'lname': 'long', 'age':'4'} ]
-properties = {'name':'Lauren', 'gender': 'f'}
-func1 = lambda x: x<10
-func2 = lambda x: x==3
-func3 = lambda x: x%2 ==0
-func4 = lambda x: x>10
-func5 = lambda x,y: x+y
-func6 = lambda x,y,z: x+y+z
-wrapper = lambda func: func()+"hello"
-#result = find(data, filter_func)
-#print (result)
+def reduceRecursive(array, func, initial=None):
+	# Func has arguments(accumulatedResult, elem)
+	if not array:
+		return initial
+	elif len(array)==1 and initial==None:
+		return array[0]
+	else:
+		return func(reduceRecursive(array[:-1], func, initial), array[-1])
 
-greet    = lambda name:"hi: " + name
-exclaim  = lambda statement: statement.upper() + "!"
-welcome = compose(greet, exclaim);
-welcome('moe');
-
-
-negFunc1 = negate(func1)
-negFunc1(data)
+def reduceRightRecursive (array, func, initial=None):
+	# Func has arguments(accumulatedResult, elem)
+	if not array:
+		return initial
+	elif len(array)==1 and initial==None:
+		return array[0]
+	else:
+		return func(reduceRightRecursive(array[1:], func, initial), array[0])
 
